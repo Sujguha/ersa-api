@@ -3,13 +3,10 @@ ERSA API — FastAPI wrapper
 ---------------------------------------------------------------------------
 Exposes ERSA (Enterprise Release Stability Agent) as a REST endpoint that
 matches what the ServiceNow ERSAIntegration Script Include sends and expects
-back.
+back. Real scoring logic lives in ersa_core.py (ERSAAgent), which calls
+Claude via LangChain.
 
-This file is a STUB for the scoring logic — replace the body of
-`run_ersa_assessment()` with your actual ERSA / LangChain pipeline call.
-Everything else (request schema, response schema, error handling, the route)
-is wired to match the ServiceNow side exactly, so you shouldn't need to
-touch ServiceNow again once you plug in the real logic here.
+Requires ANTHROPIC_API_KEY to be set as an environment variable.
 ---------------------------------------------------------------------------
 """
 
@@ -18,10 +15,16 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 
+from ersa_core import ERSAAgent
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ersa-api")
 
 app = FastAPI(title="ERSA Risk API", version="1.0.0")
+
+# Instantiated once at startup — raises immediately and loudly if
+# ANTHROPIC_API_KEY isn't set, rather than failing silently on first request.
+agent = ERSAAgent()
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +66,7 @@ def assess_change(payload: ChangeRequestPayload):
     logger.info("Assessing change %s (%s)", payload.change_id, payload.sys_id)
 
     try:
-        risk_score, recommendation = run_ersa_assessment(payload)
+        risk_score, recommendation = agent.evaluate(payload.model_dump())
     except Exception as exc:
         logger.exception("ERSA assessment failed for %s", payload.change_id)
         raise HTTPException(status_code=500, detail=f"ERSA assessment failed: {exc}")
@@ -71,44 +74,4 @@ def assess_change(payload: ChangeRequestPayload):
     return ERSAResponse(risk_score=risk_score, recommendation=recommendation)
 
 
-def run_ersa_assessment(payload: ChangeRequestPayload) -> tuple[int, str]:
-    """
-    Replace this function body with your actual ERSA / LangChain logic.
 
-    It receives the full Change Request payload and must return a tuple:
-        (risk_score: int between 0-100, recommendation: str)
-
-    Example of where your real pipeline plugs in:
-
-        from ersa_core import ERSAAgent
-        agent = ERSAAgent()
-        result = agent.evaluate(
-            description=payload.description,
-            change_type=payload.type,
-            ci=payload.cmdb_ci,
-            ...
-        )
-        return result.risk_score, result.summary
-    """
-    # --- STUB LOGIC (delete once real ERSA pipeline is wired in) ----------
-    text = f"{payload.short_description} {payload.description}".lower()
-    score = 30
-    reasons = []
-
-    if payload.type and payload.type.lower() == "emergency":
-        score += 30
-        reasons.append("emergency change type")
-    if "production" in text or "prod" in text:
-        score += 20
-        reasons.append("touches production")
-    if not payload.planned_start_date or not payload.planned_end_date:
-        score += 10
-        reasons.append("missing planned window")
-
-    score = min(score, 100)
-    recommendation = (
-        f"Stub assessment — score based on: {', '.join(reasons) or 'no risk signals found'}. "
-        "Replace run_ersa_assessment() with the real ERSA pipeline."
-    )
-    return score, recommendation
-    # ------------------------------------------------------------------------
